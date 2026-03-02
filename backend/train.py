@@ -1,23 +1,17 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
+#!/usr/bin/env python3
 import pandas as pd
 import numpy as np
+from sklearn.metrics import accuracy_score, classification_report
 import xgboost as xgb
 import joblib
 import os
 from datetime import datetime
 
-app = FastAPI(title="MLB Scanner API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+TEAMS = [
+    'LAA', 'AZ', 'BAL', 'BOS', 'CHC', 'CIN', 'CLE', 'COL', 'DET', 'HOU',
+    'KC', 'LAD', 'WSH', 'NYM', 'ATH', 'PIT', 'SD', 'SEA', 'SF', 'STL',
+    'TB', 'TEX', 'TOR', 'MIN', 'PHI', 'ATL', 'CWS', 'MIA', 'NYY', 'MIL'
+]
 
 TEAM_FULL_NAME = {
     'Arizona Diamondbacks': 'AZ', 'Atlanta Braves': 'ATL', 'Baltimore Orioles': 'BAL',
@@ -30,6 +24,7 @@ TEAM_FULL_NAME = {
     'Texas Rangers': 'TEX', 'Toronto Blue Jays': 'TOR', 'Minnesota Twins': 'MIN',
     'Philadelphia Phillies': 'PHI', 'Chicago White Sox': 'CWS', 'Miami Marlins': 'MIA',
     'New York Yankees': 'NYY', 'Milwaukee Brewers': 'MIL', 'Los Angeles Angels': 'LAA',
+    'Arizona Diamondbacks': 'AZ'
 }
 
 def load_batting_stats(year):
@@ -56,7 +51,8 @@ def load_batting_stats(year):
                     'bat_g': row.get('G', 162),
                 }
         return stats
-    except:
+    except Exception as e:
+        print(f"Error loading batting {year}: {e}")
         return {}
 
 def load_pitching_stats(year):
@@ -85,7 +81,8 @@ def load_pitching_stats(year):
                     'pit_g': row.get('G', 162),
                 }
         return stats
-    except:
+    except Exception as e:
+        print(f"Error loading pitching {year}: {e}")
         return {}
 
 def load_results(year):
@@ -131,140 +128,21 @@ def calculate_rolling_stats(results_df, team, date, window=10):
         'recent_games': len(team_games)
     }
 
-features = [
-    'home_bat_ba', 'home_bat_ops', 'home_bat_r_g', 'home_bat_hr_g',
-    'away_bat_ba', 'away_bat_ops', 'away_bat_r_g', 'away_bat_hr_g',
-    'home_pit_era', 'home_pit_whip', 'home_pit_r_g',
-    'away_pit_era', 'away_pit_whip', 'away_pit_r_g',
-    'bat_avg_diff', 'ops_diff', 'era_diff', 'whip_diff',
-    'expected_runs', 'expected_era',
-    'home_recent_runs_scored', 'home_recent_runs_allowed',
-    'away_recent_runs_scored', 'away_recent_runs_allowed',
-    'home_recent_total', 'away_recent_total',
-]
-
-model = None
-
-def train_model(over_under_line=7.5):
-    global model
-    
-    train_years = [2018, 2019, 2021, 2022, 2023, 2024]
-    
+def prepare_data(years, over_under_line=7.5):
     all_games = []
     
-    for year in train_years:
+    for year in years:
+        print(f"Przygotowuję dane dla {year}...")
+        
         results = load_results(year)
         if results.empty:
+            print(f"  Brak wyników dla {year}")
             continue
             
         batting = load_batting_stats(year)
         pitching = load_pitching_stats(year)
         
-        for _, game in results.iterrows():
-            home = game['home_team']
-            away = game['away_team']
-            
-            if home not in batting or home not in pitching:
-                continue
-            if away not in batting or away not in pitching:
-                continue
-            
-            home_bat = batting[home]
-            away_bat = batting[away]
-            home_pit = pitching[home]
-            away_pit = pitching[away]
-            
-            recent_home = calculate_rolling_stats(results, home, game['date'])
-            recent_away = calculate_rolling_stats(results, away, game['date'])
-            
-            game_data = {
-                'is_over': 1 if game['total_runs'] > over_under_line else 0,
-                'home_bat_ba': home_bat['bat_ba'],
-                'home_bat_ops': home_bat['bat_ops'],
-                'home_bat_r_g': home_bat['bat_r'] / home_bat['bat_g'],
-                'home_bat_hr_g': home_bat['bat_hr'] / home_bat['bat_g'],
-                'away_bat_ba': away_bat['bat_ba'],
-                'away_bat_ops': away_bat['bat_ops'],
-                'away_bat_r_g': away_bat['bat_r'] / away_bat['bat_g'],
-                'away_bat_hr_g': away_bat['bat_hr'] / away_bat['bat_g'],
-                'home_pit_era': home_pit['pit_era'],
-                'home_pit_whip': home_pit['pit_whip'],
-                'home_pit_r_g': home_pit['pit_r'] / home_pit['pit_g'],
-                'away_pit_era': away_pit['pit_era'],
-                'away_pit_whip': away_pit['pit_whip'],
-                'away_pit_r_g': away_pit['pit_r'] / away_pit['pit_g'],
-                'bat_avg_diff': home_bat['bat_ba'] - away_bat['bat_ba'],
-                'ops_diff': home_bat['bat_ops'] - away_bat['bat_ops'],
-                'era_diff': home_pit['pit_era'] - away_pit['pit_era'],
-                'whip_diff': home_pit['pit_whip'] - away_pit['pit_whip'],
-                'expected_runs': (home_bat['bat_r'] / home_bat['bat_g'] + away_bat['bat_r'] / away_bat['bat_g']) / 2,
-                'expected_era': (home_pit['pit_era'] + away_pit['pit_era']) / 2,
-                'home_recent_runs_scored': recent_home['recent_runs_scored'],
-                'home_recent_runs_allowed': recent_home['recent_runs_allowed'],
-                'away_recent_runs_scored': recent_away['recent_runs_scored'],
-                'away_recent_runs_allowed': recent_away['recent_runs_allowed'],
-                'home_recent_total': recent_home['recent_total'],
-                'away_recent_total': recent_away['recent_total'],
-            }
-            
-            all_games.append(game_data)
-    
-    df = pd.DataFrame(all_games)
-    
-    X_train = df[features]
-    y_train = df['is_over']
-    
-    model = xgb.XGBClassifier(
-        n_estimators=100,
-        max_depth=5,
-        learning_rate=0.1,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42,
-        eval_metric='logloss'
-    )
-    model.fit(X_train, y_train)
-    
-    return model
-
-class SimulationRequest(BaseModel):
-    train_season_start: int = 2018
-    train_season_end: int = 2024
-    test_season_start: int = 2025
-    test_season_end: int = 2025
-    over_under_line: float = 7.5
-    confidence_threshold: float = 50.0
-
-@app.get("/")
-def root():
-    return {"message": "MLB Scanner API - Over/Under Predictions"}
-
-@app.get("/teams")
-def get_teams():
-    return {"teams": list(TEAM_FULL_NAME.values())}
-
-@app.get("/seasons")
-def get_seasons():
-    return {"seasons": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]}
-
-@app.post("/simulate")
-async def simulate(request: SimulationRequest):
-    global model
-    
-    over_under_line = request.over_under_line
-    
-    model = train_model(over_under_line)
-    
-    test_years = list(range(request.test_season_start, request.test_season_end + 1))
-    
-    test_games = []
-    for year in test_years:
-        results = load_results(year)
-        if results.empty:
-            continue
-            
-        batting = load_batting_stats(year)
-        pitching = load_pitching_stats(year)
+        results['year'] = year
         
         for _, game in results.iterrows():
             home = game['home_team']
@@ -285,32 +163,41 @@ async def simulate(request: SimulationRequest):
             
             game_data = {
                 'date': game['date'],
+                'year': year,
                 'home_team': home,
                 'away_team': away,
                 'home_score': game['home_score'],
                 'away_score': game['away_score'],
                 'total_runs': game['total_runs'],
+                'over_line': over_under_line,
                 'is_over': 1 if game['total_runs'] > over_under_line else 0,
+                
                 'home_bat_ba': home_bat['bat_ba'],
                 'home_bat_ops': home_bat['bat_ops'],
                 'home_bat_r_g': home_bat['bat_r'] / home_bat['bat_g'],
                 'home_bat_hr_g': home_bat['bat_hr'] / home_bat['bat_g'],
+                
                 'away_bat_ba': away_bat['bat_ba'],
                 'away_bat_ops': away_bat['bat_ops'],
                 'away_bat_r_g': away_bat['bat_r'] / away_bat['bat_g'],
                 'away_bat_hr_g': away_bat['bat_hr'] / away_bat['bat_g'],
+                
                 'home_pit_era': home_pit['pit_era'],
                 'home_pit_whip': home_pit['pit_whip'],
                 'home_pit_r_g': home_pit['pit_r'] / home_pit['pit_g'],
+                
                 'away_pit_era': away_pit['pit_era'],
                 'away_pit_whip': away_pit['pit_whip'],
                 'away_pit_r_g': away_pit['pit_r'] / away_pit['pit_g'],
+                
                 'bat_avg_diff': home_bat['bat_ba'] - away_bat['bat_ba'],
                 'ops_diff': home_bat['bat_ops'] - away_bat['bat_ops'],
                 'era_diff': home_pit['pit_era'] - away_pit['pit_era'],
                 'whip_diff': home_pit['pit_whip'] - away_pit['pit_whip'],
+                
                 'expected_runs': (home_bat['bat_r'] / home_bat['bat_g'] + away_bat['bat_r'] / away_bat['bat_g']) / 2,
                 'expected_era': (home_pit['pit_era'] + away_pit['pit_era']) / 2,
+                
                 'home_recent_runs_scored': recent_home['recent_runs_scored'],
                 'home_recent_runs_allowed': recent_home['recent_runs_allowed'],
                 'away_recent_runs_scored': recent_away['recent_runs_scored'],
@@ -319,64 +206,98 @@ async def simulate(request: SimulationRequest):
                 'away_recent_total': recent_away['recent_total'],
             }
             
-            test_games.append(game_data)
+            all_games.append(game_data)
     
-    if not test_games:
-        raise HTTPException(status_code=400, detail="Brak danych testowych")
+    return pd.DataFrame(all_games)
+
+def main():
+    over_under_line = 7.5
     
-    test_df = pd.DataFrame(test_games)
+    print(f"=== MLB Over/Under Model (linia {over_under_line}) ===\n")
+    
+    train_years = [2018, 2019, 2021, 2022, 2023, 2024]
+    test_years = [2025]
+    
+    print("Przygotowuję dane treningowe...")
+    train_df = prepare_data(train_years, over_under_line)
+    print(f" Dane treningowe: {len(train_df)} meczów\n")
+    
+    print("Przygotowuję dane testowe...")
+    test_df = prepare_data(test_years, over_under_line)
+    print(f" Dane testowe: {len(test_df)} meczów\n")
+    
+    features = [
+        'home_bat_ba', 'home_bat_ops', 'home_bat_r_g', 'home_bat_hr_g',
+        'away_bat_ba', 'away_bat_ops', 'away_bat_r_g', 'away_bat_hr_g',
+        'home_pit_era', 'home_pit_whip', 'home_pit_r_g',
+        'away_pit_era', 'away_pit_whip', 'away_pit_r_g',
+        'bat_avg_diff', 'ops_diff', 'era_diff', 'whip_diff',
+        'expected_runs', 'expected_era',
+        'home_recent_runs_scored', 'home_recent_runs_allowed',
+        'away_recent_runs_scored', 'away_recent_runs_allowed',
+        'home_recent_total', 'away_recent_total',
+    ]
+    
+    X_train = train_df[features]
+    y_train = train_df['is_over']
     
     X_test = test_df[features]
+    y_test = test_df['is_over']
+    
+    print(f"Target distribution (train): {y_train.mean():.2%} OVER {over_under_line}")
+    print(f"Target distribution (test): {y_test.mean():.2%} OVER {over_under_line}\n")
+    
+    print("Trenowanie modelu XGBoost...")
+    model = xgb.XGBClassifier(
+        n_estimators=100,
+        max_depth=5,
+        learning_rate=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        eval_metric='logloss'
+    )
+    model.fit(X_train, y_train)
+    
     prob = model.predict_proba(X_test)[:, 1]
+    pred = (prob >= 0.5).astype(int)
+    
+    print("\n=== WYNIKI MODELU ===")
+    print(f"Accuracy: {accuracy_score(y_test, pred):.2%}")
+    print(f"\nClassification Report:")
+    print(classification_report(y_test, pred, target_names=[f'UNDER {over_under_line}', f'OVER {over_under_line}']))
+    
+    print("\n=== TESTY SYMULACJI BETTINGU ===")
+    for threshold in [0.5, 0.55, 0.6, 0.65, 0.7]:
+        bet_mask = prob >= threshold
+        bet_count = bet_mask.sum()
+        if bet_count == 0:
+            continue
+        
+        actual_results = y_test.values[bet_mask]
+        hits = (actual_results == 1).sum()
+        hit_rate = hits / bet_count
+        
+        profit = hits - (bet_count - hits)
+        roi = profit / bet_count * 100
+        
+        print(f"Threshold {threshold:.0%}: {bet_count} zakładów, {hits} trafionych ({hit_rate:.1%}), ROI: {roi:+.1f}%")
+    
+    os.makedirs('model', exist_ok=True)
+    joblib.dump(model, f'model/mlb_model_{int(over_under_line*10)}.pkl')
+    print(f"\nModel zapisany do model/mlb_model_{int(over_under_line*10)}.pkl")
+    
+    feature_importance = pd.DataFrame({
+        'feature': features,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    print("\n=== TOP 10 FEATURES ===")
+    print(feature_importance.head(10).to_string(index=False))
     
     test_df['predicted_prob'] = prob
-    
-    threshold = request.confidence_threshold / 100
-    
-    qualifying = test_df[test_df['predicted_prob'] >= threshold].copy()
-    
-    if len(qualifying) == 0:
-        return {
-            "total_profit": 0.0,
-            "roi_percent": 0.0,
-            "hit_rate": 0.0,
-            "total_bets": 0,
-            "hits": 0,
-            "games": []
-        }
-    
-    hits = qualifying['is_over'].sum()
-    total_bets = len(qualifying)
-    hit_rate = hits / total_bets
-    
-    profit = hits - (total_bets - hits)
-    roi = profit / total_bets * 100
-    
-    games = []
-    for _, g in qualifying.iterrows():
-        games.append({
-            "date": g['date'],
-            "home_team": g['home_team'],
-            "away_team": g['away_team'],
-            "home_score": int(g['home_score']),
-            "away_score": int(g['away_score']),
-            "total_runs": int(g['total_runs']),
-            "over_line": over_under_line,
-            "actual_over": bool(g['is_over']),
-            "predicted_prob": round(g['predicted_prob'] * 100, 1)
-        })
-    
-    return {
-        "total_profit": profit,
-        "roi_percent": round(roi, 1),
-        "hit_rate": round(hit_rate * 100, 1),
-        "total_bets": total_bets,
-        "hits": hits,
-        "over_under_line": over_under_line,
-        "confidence_threshold": request.confidence_threshold,
-        "games": games
-    }
+    test_df.to_csv('../data/test_results.csv', index=False)
+    print("\nWyniki testowe zapisane do ../data/test_results.csv")
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+if __name__ == '__main__':
+    main()
