@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLB Scanner - Over/Under</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; color: #00d4ff; margin-bottom: 30px; }
+        
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab { padding: 12px 24px; background: #16213e; border: none; border-radius: 8px; color: #aaa; font-size: 16px; cursor: pointer; }
+        .tab.active { background: #00d4ff; color: #1a1a2e; font-weight: bold; }
+        
+        .controls { background: #16213e; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+        .controls h2 { color: #00d4ff; margin-bottom: 15px; font-size: 18px; }
+        .control-row { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 15px; }
+        .control-group { flex: 1; min-width: 200px; }
+        .control-group label { display: block; margin-bottom: 8px; color: #aaa; font-size: 14px; }
+        .control-group select, .control-group input { width: 100%; padding: 10px; background: #0f3460; border: 1px solid #1a1a2e; border-radius: 6px; color: #fff; font-size: 14px; }
+        
+        .slider-group { flex: 2; min-width: 300px; }
+        .slider-container { display: flex; align-items: center; gap: 15px; }
+        .slider-container input[type="range"] { flex: 1; accent-color: #00d4ff; }
+        .slider-value { font-size: 24px; font-weight: bold; color: #00d4ff; min-width: 60px; }
+        
+        button { width: 100%; padding: 15px; background: linear-gradient(135deg, #00d4ff, #0099cc); border: none; border-radius: 8px; color: #fff; font-size: 16px; font-weight: bold; cursor: pointer; }
+        button:hover { transform: scale(1.02); }
+        button:disabled { background: #555; cursor: not-allowed; }
+        
+        .results { background: #16213e; padding: 20px; border-radius: 12px; margin-top: 20px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: #0f3460; padding: 15px; border-radius: 8px; text-align: center; }
+        .stat-label { color: #aaa; font-size: 12px; margin-bottom: 5px; }
+        .stat-value { font-size: 24px; font-weight: bold; }
+        .stat-value.positive { color: #4ade80; }
+        .stat-value.negative { color: #ef4444; }
+        
+        .games-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .games-table th { background: #0f3460; padding: 12px; text-align: left; font-size: 12px; color: #aaa; }
+        .games-table td { padding: 10px; border-bottom: 1px solid #1a1a2e; font-size: 14px; }
+        .games-table tr:hover { background: #0f3460; }
+        .bet-won { color: #4ade80; }
+        .bet-lost { color: #ef4444; }
+        
+        .loading { text-align: center; padding: 40px; color: #00d4ff; }
+        .error { background: #7f1d1d; padding: 15px; border-radius: 8px; color: #fca5a5; margin-top: 20px; }
+        
+        .section { display: none; }
+        .section.active { display: block; }
+        
+        .games-input { margin-bottom: 15px; }
+        .games-input textarea { width: 100%; height: 150px; padding: 10px; background: #0f3460; border: 1px solid #1a1a2e; border-radius: 6px; color: #fff; font-size: 14px; font-family: monospace; }
+        .games-input label { display: block; margin-bottom: 8px; color: #aaa; font-size: 14px; }
+        
+        .prediction-card { background: #0f3460; padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .prediction-card .match { font-size: 16px; font-weight: bold; }
+        .prediction-card .prob { font-size: 20px; font-weight: bold; color: #00d4ff; }
+        .prediction-card .bet { color: #4ade80; font-weight: bold; }
+        .checkbox-wrapper { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+        .checkbox-wrapper input { width: 20px; height: 20px; accent-color: #4ade80; }
+        .checkbox-wrapper label { font-size: 14px; color: #aaa; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MLB Scanner - Over/Under Predictions</h1>
+        
+        <div class="tabs">
+            <button id="tabBacktest" class="tab active" onclick="showTab('backtest')">Backtest</button>
+            <button id="tabSchedule" class="tab" onclick="showTab('schedule')">Schedule 2026</button>
+        </div>
+        
+        <div id="backtestSection" class="section active">
+            <div class="controls">
+                <h2>Konfiguracja</h2>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label>Sezon treningowy - Od</label>
+                        <select id="trainStart">
+                            <option value="2018">2018</option>
+                            <option value="2019">2019</option>
+                            <option value="2020">2020</option>
+                            <option value="2021">2021</option>
+                            <option value="2022">2022</option>
+                            <option value="2023">2023</option>
+                            <option value="2024" selected>2024</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Sezon treningowy - Do</label>
+                        <select id="trainEnd">
+                            <option value="2018">2018</option>
+                            <option value="2019">2019</option>
+                            <option value="2020">2020</option>
+                            <option value="2021">2021</option>
+                            <option value="2022">2022</option>
+                            <option value="2023">2023</option>
+                            <option value="2024" selected>2024</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Sezon testowy</label>
+                        <select id="testSeason">
+                            <option value="2019">2019</option>
+                            <option value="2020">2020</option>
+                            <option value="2021">2021</option>
+                            <option value="2022">2022</option>
+                            <option value="2023">2023</option>
+                            <option value="2024">2024</option>
+                            <option value="2025" selected>2025</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Linia</label>
+                        <select id="overLine">
+                            <option value="6.5" selected>Over 6.5</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="slider-group">
+                        <label>Minimalna pewnosc (%)</label>
+                        <div class="slider-container">
+                            <input type="range" id="threshold" min="50" max="95" value="77">
+                            <span class="slider-value" id="thresholdValue">77%</span>
+                        </div>
+                    </div>
+                </div>
+                <button id="runBtn" onclick="runSimulation()">Uruchom symulacje</button>
+            </div>
+            
+            <div id="results" style="display: none;"></div>
+            <div id="error" style="display: none;"></div>
+        </div>
+        
+        <div id="scheduleSection" class="section">
+            <div class="controls">
+                <h2>Predykcje na sezon 2026</h2>
+                <p style="color:#aaa;margin-bottom:15px;">Wpisz mecze w formacie: data,home,away</p>
+                <div class="games-input">
+                    <label>Mecze</label>
+                    <textarea id="gamesInput" placeholder="2026-03-26,NYY,BOS
+2026-03-26,LAD,SF
+2026-03-26,CHC,STL"></textarea>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label>Statystyki z sezonu</label>
+                        <select id="statsSeason">
+                            <option value="2025" selected>2025</option>
+                            <option value="2024">2024</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Minimalna pewnosc (%)</label>
+                        <select id="schedThreshold">
+                            <option value="75">75%</option>
+                            <option value="77" selected>77%</option>
+                            <option value="80">80%</option>
+                            <option value="85">85%</option>
+                        </select>
+                    </div>
+                </div>
+                <button id="predictBtn" onclick="runPredictions()">Generuj predykcje</button>
+            </div>
+            <div id="predictionsResults" style="display: none;"></div>
+        </div>
+    </div>
+    
+    <script>
+        var lastGamesData = [];
+        
+        function showTab(tab) {
+            document.getElementById('tabBacktest').classList.remove('active');
+            document.getElementById('tabSchedule').classList.remove('active');
+            document.getElementById('backtestSection').classList.remove('active');
+            document.getElementById('scheduleSection').classList.remove('active');
+            
+            if (tab === 'backtest') {
+                document.getElementById('tabBacktest').classList.add('active');
+                document.getElementById('backtestSection').classList.add('active');
+            } else {
+                document.getElementById('tabSchedule').classList.add('active');
+                document.getElementById('scheduleSection').classList.add('active');
+            }
+        }
+        
+        document.getElementById('threshold').addEventListener('input', function() {
+            document.getElementById('thresholdValue').textContent = this.value + '%';
+        });
+        
+        async function runSimulation() {
+            var btn = document.getElementById('runBtn');
+            var resultsDiv = document.getElementById('results');
+            var errorDiv = document.getElementById('error');
+            
+            btn.disabled = true;
+            btn.textContent = 'Ladowanie...';
+            resultsDiv.style.display = 'none';
+            errorDiv.style.display = 'none';
+            
+            var request = {
+                train_season_start: parseInt(document.getElementById('trainStart').value),
+                train_season_end: parseInt(document.getElementById('trainEnd').value),
+                test_season_start: parseInt(document.getElementById('testSeason').value),
+                test_season_end: parseInt(document.getElementById('testSeason').value),
+                over_under_line: parseFloat(document.getElementById('overLine').value),
+                confidence_threshold: parseFloat(document.getElementById('threshold').value)
+            };
+            
+            try {
+                var response = await fetch('/simulate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(request)
+                });
+                
+                if (!response.ok) throw new Error('Blad serwera');
+                
+                var data = await response.json();
+                displayResults(data);
+            } catch (e) {
+                errorDiv.textContent = 'Blad: ' + e.message;
+                errorDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Uruchom symulacje';
+            }
+        }
+        
+        function displayResults(data) {
+            var resultsDiv = document.getElementById('results');
+            resultsDiv.style.display = 'block';
+            
+            lastGamesData = data.games;
+            
+            var profitClass = data.total_profit >= 0 ? 'positive' : 'negative';
+            var stake = 100;
+            var odds = 1.5;
+            var winAmount = stake * odds - stake;
+            var totalProfit = data.hits * winAmount - (data.total_bets - data.hits) * stake;
+            var totalRoi = data.total_bets > 0 ? (totalProfit / (data.total_bets * stake) * 100).toFixed(1) : 0;
+            
+            var html = '<div class="results">';
+            html += '<h2>Wyniki symulacji</h2>';
+            html += '<div class="stats-grid">';
+            html += '<div class="stat-card"><div class="stat-label">Liczba zakaladow</div><div class="stat-value">' + data.total_bets + '</div></div>';
+            html += '<div class="stat-card"><div class="stat-label">Trafienia</div><div class="stat-value">' + data.hits + '</div></div>';
+            html += '<div class="stat-card"><div class="stat-label">Hit Rate</div><div class="stat-value">' + data.hit_rate + '%</div></div>';
+            html += '<div class="stat-card"><div class="stat-label">Zysk (stawka 100)</div><div class="stat-value ' + profitClass + '">' + totalProfit + ' PLN</div></div>';
+            html += '<div class="stat-card"><div class="stat-label">ROI</div><div class="stat-value ' + (totalRoi >= 0 ? 'positive' : 'negative') + '">' + totalRoi + '%</div></div>';
+            html += '<div class="stat-card"><div class="stat-label">Linia</div><div class="stat-value">Over ' + data.over_under_line + '</div></div>';
+            html += '</div>';
+            
+            html += '<h3>Szczegoly zakladow</h3>';
+            html += '<table class="games-table"><thead><tr><th>Data</th><th>Mecz</th><th>Total</th><th>Wynik</th><th>Pewnosc</th><th>Kurs</th><th>Wynik</th></tr></thead><tbody>';
+            
+            for (var i = 0; i < data.games.length; i++) {
+                var g = data.games[i];
+                html += '<tr>';
+                html += '<td>' + g.date + '</td>';
+                html += '<td>' + g.home_team + ' vs ' + g.away_team + '</td>';
+                html += '<td>' + g.total_runs + '</td>';
+                html += '<td>' + g.home_score + ' - ' + g.away_score + '</td>';
+                html += '<td>' + g.predicted_prob + '%</td>';
+                html += '<td><input type="number" class="odds-input" value="1.5" step="0.05" min="1.0" max="3.0" style="width:60px;padding:5px;background:#0f3460;border:1px solid #333;border-radius:4px;color:#fff;"></td>';
+                html += '<td class="' + (g.actual_over ? 'bet-won' : 'bet-lost') + '">' + (g.actual_over ? 'WIN' : 'LOSS') + '</td>';
+                html += '</tr>';
+            }
+            
+            html += '</tbody></table>';
+            html += '</div>';
+            
+            resultsDiv.innerHTML = html;
+        }
+        
+        async function runPredictions() {
+            var btn = document.getElementById('predictBtn');
+            var resultsDiv = document.getElementById('predictionsResults');
+            
+            btn.disabled = true;
+            btn.textContent = 'Liczenie...';
+            resultsDiv.style.display = 'none';
+            
+            var gamesText = document.getElementById('gamesInput').value.trim();
+            var lines = gamesText.split('\n').filter(function(l) { return l.trim(); });
+            
+            var games = [];
+            for (var i = 0; i < lines.length; i++) {
+                var parts = lines[i].split(',');
+                if (parts.length >= 3) {
+                    games.push({
+                        date: parts[0].trim(),
+                        home_team: parts[1].trim().toUpperCase(),
+                        away_team: parts[2].trim().toUpperCase()
+                    });
+                }
+            }
+            
+            if (games.length === 0) {
+                alert('Wpisz przynajmniej jeden mecz');
+                btn.disabled = false;
+                btn.textContent = 'Generuj predykcje';
+                return;
+            }
+            
+            var request = {
+                games: games,
+                stats_season: parseInt(document.getElementById('statsSeason').value),
+                over_under_line: 6.5,
+                threshold: parseFloat(document.getElementById('schedThreshold').value)
+            };
+            
+            try {
+                var response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(request)
+                });
+                
+                if (!response.ok) throw new Error('Blad serwera');
+                
+                var data = await response.json();
+                displayPredictions(data);
+            } catch (e) {
+                alert('Blad: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Generuj predykcje';
+            }
+        }
+        
+        function displayPredictions(data) {
+            var resultsDiv = document.getElementById('predictionsResults');
+            resultsDiv.style.display = 'block';
+            
+            if (data.predictions.length === 0) {
+                resultsDiv.innerHTML = '<div class="error">Brak meczow spelniajacych kryterium threshold ' + data.threshold + '%</div>';
+                return;
+            }
+            
+            var html = '<div class="results">';
+            html += '<h2>Predykcje - Sezon 2026</h2>';
+            html += '<p style="color:#aaa;margin-bottom:15px;">Statystyki z sezonu: ' + data.stats_season + ' | Over ' + data.over_under_line + ' | Threshold: ' + data.threshold + '%</p>';
+            html += '<div class="stats-grid">';
+            html += '<div class="stat-card"><div class="stat-label">Wszystkich meczow</div><div class="stat-value">' + data.total_games + '</div></div>';
+            html += '<div class="stat-card"><div class="stat-label">Typow do grania</div><div class="stat-value" style="color:#00d4ff">' + data.qualifying_games + '</div></div>';
+            html += '</div>';
+            html += '<h3>Typy do gry:</h3>';
+            
+            for (var i = 0; i < data.predictions.length; i++) {
+                var p = data.predictions[i];
+                html += '<div class="prediction-card">';
+                html += '<div><div class="match">' + p.date + ' | ' + p.home_team + ' vs ' + p.away_team + '</div>';
+                html += '<div class="bet">' + p.bet + '</div></div>';
+                html += '<div class="prob">' + p.probability + '%</div>';
+                html += '</div>';
+            }
+            
+            html += '</div>';
+            resultsDiv.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

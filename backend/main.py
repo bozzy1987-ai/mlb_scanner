@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import pandas as pd
@@ -10,6 +11,12 @@ import os
 from datetime import datetime
 
 app = FastAPI(title="MLB Scanner API")
+
+frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "index.html")
+
+@app.get("/")
+async def root():
+    return FileResponse(frontend_path)
 
 app.add_middleware(
     CORSMiddleware,
@@ -138,17 +145,14 @@ features = [
     'away_pit_era', 'away_pit_whip', 'away_pit_r_g',
     'bat_avg_diff', 'ops_diff', 'era_diff', 'whip_diff',
     'expected_runs', 'expected_era',
-    'home_recent_runs_scored', 'home_recent_runs_allowed',
-    'away_recent_runs_scored', 'away_recent_runs_allowed',
-    'home_recent_total', 'away_recent_total',
 ]
 
 model = None
 
-def train_model(over_under_line=7.5):
+def train_model(train_years, over_under_line=7.5):
     global model
     
-    train_years = [2018, 2019, 2021, 2022, 2023, 2024]
+    train_years = list(range(train_years[0], train_years[1] + 1))
     
     all_games = []
     
@@ -174,9 +178,6 @@ def train_model(over_under_line=7.5):
             home_pit = pitching[home]
             away_pit = pitching[away]
             
-            recent_home = calculate_rolling_stats(results, home, game['date'])
-            recent_away = calculate_rolling_stats(results, away, game['date'])
-            
             game_data = {
                 'is_over': 1 if game['total_runs'] > over_under_line else 0,
                 'home_bat_ba': home_bat['bat_ba'],
@@ -199,12 +200,6 @@ def train_model(over_under_line=7.5):
                 'whip_diff': home_pit['pit_whip'] - away_pit['pit_whip'],
                 'expected_runs': (home_bat['bat_r'] / home_bat['bat_g'] + away_bat['bat_r'] / away_bat['bat_g']) / 2,
                 'expected_era': (home_pit['pit_era'] + away_pit['pit_era']) / 2,
-                'home_recent_runs_scored': recent_home['recent_runs_scored'],
-                'home_recent_runs_allowed': recent_home['recent_runs_allowed'],
-                'away_recent_runs_scored': recent_away['recent_runs_scored'],
-                'away_recent_runs_allowed': recent_away['recent_runs_allowed'],
-                'home_recent_total': recent_home['recent_total'],
-                'away_recent_total': recent_away['recent_total'],
             }
             
             all_games.append(game_data)
@@ -232,8 +227,19 @@ class SimulationRequest(BaseModel):
     train_season_end: int = 2024
     test_season_start: int = 2025
     test_season_end: int = 2025
-    over_under_line: float = 7.5
+    over_under_line: float = 6.5
     confidence_threshold: float = 50.0
+
+class GamePredict(BaseModel):
+    date: str
+    home_team: str
+    away_team: str
+
+class PredictRequest(BaseModel):
+    games: list[GamePredict]
+    stats_season: int = 2025
+    over_under_line: float = 6.5
+    threshold: float = 70.0
 
 @app.get("/")
 def root():
@@ -253,7 +259,7 @@ async def simulate(request: SimulationRequest):
     
     over_under_line = request.over_under_line
     
-    model = train_model(over_under_line)
+    model = train_model([request.train_season_start, request.train_season_end], over_under_line)
     
     test_years = list(range(request.test_season_start, request.test_season_end + 1))
     
@@ -262,6 +268,8 @@ async def simulate(request: SimulationRequest):
         results = load_results(year)
         if results.empty:
             continue
+        
+        results = results[results['date'] >= f'{year}-04-01']
             
         batting = load_batting_stats(year)
         pitching = load_pitching_stats(year)
@@ -279,9 +287,6 @@ async def simulate(request: SimulationRequest):
             away_bat = batting[away]
             home_pit = pitching[home]
             away_pit = pitching[away]
-            
-            recent_home = calculate_rolling_stats(results, home, game['date'])
-            recent_away = calculate_rolling_stats(results, away, game['date'])
             
             game_data = {
                 'date': game['date'],
@@ -311,12 +316,6 @@ async def simulate(request: SimulationRequest):
                 'whip_diff': home_pit['pit_whip'] - away_pit['pit_whip'],
                 'expected_runs': (home_bat['bat_r'] / home_bat['bat_g'] + away_bat['bat_r'] / away_bat['bat_g']) / 2,
                 'expected_era': (home_pit['pit_era'] + away_pit['pit_era']) / 2,
-                'home_recent_runs_scored': recent_home['recent_runs_scored'],
-                'home_recent_runs_allowed': recent_home['recent_runs_allowed'],
-                'away_recent_runs_scored': recent_away['recent_runs_scored'],
-                'away_recent_runs_allowed': recent_away['recent_runs_allowed'],
-                'home_recent_total': recent_home['recent_total'],
-                'away_recent_total': recent_away['recent_total'],
             }
             
             test_games.append(game_data)
@@ -345,11 +344,11 @@ async def simulate(request: SimulationRequest):
             "games": []
         }
     
-    hits = qualifying['is_over'].sum()
+    hits = int(qualifying['is_over'].sum())
     total_bets = len(qualifying)
     hit_rate = hits / total_bets
     
-    profit = hits - (total_bets - hits)
+    profit = int(hits - (total_bets - hits))
     roi = profit / total_bets * 100
     
     games = []
@@ -375,6 +374,86 @@ async def simulate(request: SimulationRequest):
         "over_under_line": over_under_line,
         "confidence_threshold": request.confidence_threshold,
         "games": games
+    }
+
+@app.post("/predict")
+async def predict(request: PredictRequest):
+    batting = load_batting_stats(request.stats_season)
+    pitching = load_pitching_stats(request.stats_season)
+    
+    if not batting or not pitching:
+        raise HTTPException(status_code=400, detail=f"Brak statystyk dla sezonu {request.stats_season}")
+    
+    train_years = list(range(2018, request.stats_season + 1))
+    model = train_model(train_years, request.over_under_line)
+    
+    predict_games = []
+    for game in request.games:
+        home, away = game.home_team, game.away_team
+        
+        if home not in batting or away not in batting or home not in pitching or away not in pitching:
+            continue
+        
+        hb, ab = batting[home], batting[away]
+        hp, ap = pitching[home], pitching[away]
+        
+        game_data = {
+            'home_bat_ba': hb['bat_ba'],
+            'home_bat_ops': hb['bat_ops'],
+            'home_bat_r_g': hb['bat_r'] / hb['bat_g'],
+            'home_bat_hr_g': hb['bat_hr'] / hb['bat_g'],
+            'away_bat_ba': ab['bat_ba'],
+            'away_bat_ops': ab['bat_ops'],
+            'away_bat_r_g': ab['bat_r'] / ab['bat_g'],
+            'away_bat_hr_g': ab['bat_hr'] / ab['bat_g'],
+            'home_pit_era': hp['pit_era'],
+            'home_pit_whip': hp['pit_whip'],
+            'home_pit_r_g': hp['pit_r'] / hp['pit_g'],
+            'away_pit_era': ap['pit_era'],
+            'away_pit_whip': ap['pit_whip'],
+            'away_pit_r_g': ap['pit_r'] / ap['pit_g'],
+            'bat_avg_diff': hb['bat_ba'] - ab['bat_ba'],
+            'ops_diff': hb['bat_ops'] - ab['bat_ops'],
+            'era_diff': hp['pit_era'] - ap['pit_era'],
+            'whip_diff': hp['pit_whip'] - ap['pit_whip'],
+            'expected_runs': (hb['bat_r']/hb['bat_g'] + ab['bat_r']/ab['bat_g']) / 2,
+            'expected_era': (hp['pit_era'] + ap['pit_era']) / 2,
+        }
+        game_data['date'] = game.date
+        game_data['home_team'] = home
+        game_data['away_team'] = away
+        predict_games.append(game_data)
+    
+    if not predict_games:
+        raise HTTPException(status_code=400, detail="Brak pasujących drużyn")
+    
+    pred_df = pd.DataFrame(predict_games)
+    X_pred = pred_df[features]
+    probs = model.predict_proba(X_pred)[:, 1]
+    
+    threshold = request.threshold / 100
+    
+    results = []
+    qualifying_count = 0
+    for i, game in enumerate(predict_games):
+        prob = float(probs[i])
+        if prob >= threshold:
+            qualifying_count += 1
+            results.append({
+                "date": game['date'],
+                "home_team": game['home_team'],
+                "away_team": game['away_team'],
+                "probability": round(prob * 100, 1),
+                "bet": "OVER " + str(request.over_under_line)
+            })
+    
+    return {
+        "total_games": len(request.games),
+        "qualifying_games": qualifying_count,
+        "threshold": request.threshold,
+        "over_under_line": request.over_under_line,
+        "stats_season": request.stats_season,
+        "predictions": results
     }
 
 if __name__ == "__main__":
