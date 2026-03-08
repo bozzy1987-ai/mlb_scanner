@@ -142,9 +142,68 @@
                 <p style="color:#aaa;margin-bottom:15px;">Wpisz mecze w formacie: data,home,away</p>
                 <div class="games-input">
                     <label>Mecze</label>
-                    <textarea id="gamesInput" placeholder="2026-03-26,NYY,BOS
-2026-03-26,LAD,SF
-2026-03-26,CHC,STL"></textarea>
+                    <textarea id="gamesInput">2026-03-26,SF,NYM
+2026-03-26,NYM,PIT
+2026-03-26,MIL,CWS
+2026-03-26,CHC,WAS
+2026-03-26,BAL,MIN
+2026-03-26,CIN,BOS
+2026-03-26,HOU,LAA
+2026-03-26,SD,DET
+2026-03-26,PHI,TEX
+2026-03-26,STL,TB
+2026-03-27,LAD,AZ
+2026-03-27,SEA,CLE
+2026-03-27,SF,NYM
+2026-03-28,TOR,OAK
+2026-03-28,MIA,COL
+2026-03-28,ATL,KC
+2026-03-28,HOU,LAA
+2026-03-28,SD,DET
+2026-03-28,SEA,CLE
+2026-03-28,LAD,AZ
+2026-03-28,STL,TB
+2026-03-28,CHC,WAS
+2026-03-28,TOR,OAK
+2026-03-28,BAL,MIN
+2026-03-28,PHI,TEX
+2026-03-28,CIN,BOS
+2026-03-28,MIA,COL
+2026-03-28,NYM,PIT
+2026-03-29,HOU,LAA
+2026-03-29,MIL,CWS
+2026-03-29,ATL,KC
+2026-03-29,SF,NYM
+2026-03-29,SD,DET
+2026-03-29,LAD,AZ
+2026-03-29,SEA,CLE
+2026-03-29,ATL,KC
+2026-03-29,BAL,MIN
+2026-03-29,PHI,TEX
+2026-03-29,TOR,OAK
+2026-03-29,CIN,BOS
+2026-03-29,MIA,COL
+2026-03-29,NYM,PIT
+2026-03-29,HOU,LAA
+2026-03-29,MIL,CWS
+2026-03-29,STL,TB
+2026-03-29,CHC,WAS
+2026-03-30,SEA,CLE
+2026-03-30,KC,MIN
+2026-03-31,BAL,TEX
+2026-03-31,CIN,PIT
+2026-03-31,MIA,CWS
+2026-03-31,PHI,WAS
+2026-03-31,TOR,COL
+2026-03-31,ATL,OAK
+2026-03-31,CHC,LAA
+2026-03-31,MIL,TB
+2026-03-31,STL,NYM
+2026-03-31,HOU,BOS
+2026-03-31,SD,SF
+2026-03-31,SEA,NYY
+2026-03-31,AZ,DET
+2026-03-31,LAD,CLE</textarea>
                 </div>
                 <div class="control-row">
                     <div class="control-group">
@@ -342,6 +401,8 @@
                 return;
             }
             
+            lastPredictionsData = data.predictions;
+            
             var html = '<div class="results">';
             html += '<h2>Predykcje - Sezon 2026</h2>';
             html += '<p style="color:#aaa;margin-bottom:15px;">Statystyki z sezonu: ' + data.stats_season + ' | Over ' + data.over_under_line + ' | Threshold: ' + data.threshold + '%</p>';
@@ -349,19 +410,70 @@
             html += '<div class="stat-card"><div class="stat-label">Wszystkich meczow</div><div class="stat-value">' + data.total_games + '</div></div>';
             html += '<div class="stat-card"><div class="stat-label">Typow do grania</div><div class="stat-value" style="color:#00d4ff">' + data.qualifying_games + '</div></div>';
             html += '</div>';
-            html += '<h3>Typy do gry:</h3>';
+            html += '<h3>Typy do gry (zaznacz obstawione z kursem 1.5+):</h3>';
             
             for (var i = 0; i < data.predictions.length; i++) {
                 var p = data.predictions[i];
-                html += '<div class="prediction-card">';
-                html += '<div><div class="match">' + p.date + ' | ' + p.home_team + ' vs ' + p.away_team + '</div>';
-                html += '<div class="bet">' + p.bet + '</div></div>';
+                var key = 'pred_bet_' + p.date + '_' + p.home_team;
+                var isBetted = localStorage.getItem(key) === 'true';
+                html += '<div class="prediction-card" style="' + (isBetted ? 'border:2px solid #4ade80;' : '') + '">';
+                html += '<div>';
+                html += '<div class="match">' + p.date + ' | ' + p.home_team + ' vs ' + p.away_team + '</div>';
+                html += '<div class="bet">' + p.bet + '</div>';
+                html += '<div style="margin-top:5px;">';
+                html += '<input type="checkbox" id="bet_' + i + '" ' + (isBetted ? 'checked' : '') + ' onchange="saveBet(' + i + ', \'' + p.date + '\', \'' + p.home_team + '\')">';
+                html += '<label for="bet_' + i + '" style="margin-left:5px;color:#aaa;font-size:12px;">Obstawione (kurs 1.5+)</label>';
+                html += '</div>';
+                html += '</div>';
                 html += '<div class="prob">' + p.probability + '%</div>';
                 html += '</div>';
             }
             
+            html += '<button onclick="calculatePredictedProfit()" style="margin-top:15px;padding:12px;background:#0f3460;border:1px solid #00d4ff;border-radius:6px;color:#00d4ff;cursor:pointer;">Przelicz zysk z zaznaczonych</button>';
+            html += '<div id="predProfit" style="margin-top:10px;font-size:18px;font-weight:bold;"></div>';
             html += '</div>';
             resultsDiv.innerHTML = html;
+        }
+        
+        var lastPredictionsData = [];
+        
+        function saveBet(index, date, homeTeam) {
+            var key = 'pred_bet_' + date + '_' + homeTeam;
+            var checkbox = document.getElementById('bet_' + index);
+            localStorage.setItem(key, checkbox.checked);
+            
+            var card = checkbox.closest('.prediction-card');
+            if (checkbox.checked) {
+                card.style.border = '2px solid #4ade80';
+            } else {
+                card.style.border = 'none';
+            }
+        }
+        
+        function calculatePredictedProfit() {
+            var stake = 100;
+            var betCount = 0;
+            
+            for (var i = 0; i < lastPredictionsData.length; i++) {
+                var p = lastPredictionsData[i];
+                var key = 'pred_bet_' + p.date + '_' + p.home_team;
+                if (localStorage.getItem(key) === 'true') {
+                    betCount++;
+                }
+            }
+            
+            if (betCount === 0) {
+                document.getElementById('predProfit').innerHTML = '<span style="color:#ef4444">Zaznacz obstawione mecze!</span>';
+                return;
+            }
+            
+            var hitRate = 0.70;
+            var hits = Math.round(betCount * hitRate);
+            var losses = betCount - hits;
+            var odds = 1.5;
+            var profit = hits * (odds - 1) * stake - losses * stake;
+            
+            document.getElementById('predProfit').innerHTML = 'Przy zaznaczonych: <span style="color:' + (profit >= 0 ? '#4ade80' : '#ef4444') + '">' + profit + ' PLN</span> (' + betCount + ' meczy zakladanych, ' + hits + ' trafione przy 70% hit rate)';
         }
     </script>
 </body>
